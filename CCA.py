@@ -48,12 +48,12 @@ if command_area_zip and feature_zip and chaur_zip:
             st.error("❌ 'TEXTSTRING' column missing in Command Area shapefile.")
             st.stop()
 
-        command_areas["Command_Area_km2"] = command_areas.geometry.area / 1e6
+        command_areas["Command_Area_m2"] = command_areas.geometry.area 
 
         chaur_cmd = gpd.overlay(chaur_areas, command_areas, how="intersection")
-        chaur_cmd["Area_km2"] = chaur_cmd.geometry.area / 1e6
-        chaur_summary = chaur_cmd.groupby("TEXTSTRING")["Area_km2"].sum().reset_index()
-        chaur_summary.rename(columns={"Area_km2": "Chaur_Area_km2"}, inplace=True)
+        chaur_cmd["Area_m2"] = chaur_cmd.geometry.area 
+        chaur_summary = chaur_cmd.groupby("TEXTSTRING")["Area_m2"].sum().reset_index()
+        chaur_summary.rename(columns={"Area_m2": "Chaur_Area_m2"}, inplace=True)
 
         features_no_chaur = gpd.overlay(features, chaur_areas, how="difference")
 
@@ -66,17 +66,17 @@ if command_area_zip and feature_zip and chaur_zip:
             features_no_chaur["Category"] = features_no_chaur[category_col]
 
         intersections = gpd.overlay(features_no_chaur, command_areas, how="intersection")
-        intersections["Feature_Area_km2"] = intersections.geometry.area / 1e6
+        intersections["Feature_Area_m2"] = intersections.geometry.area
 
-        grouped = intersections.groupby(["TEXTSTRING", "Category"])["Feature_Area_km2"].sum().reset_index()
-        pivot = grouped.pivot(index="TEXTSTRING", columns="Category", values="Feature_Area_km2").fillna(0)
+        grouped = intersections.groupby(["TEXTSTRING", "Category"])["Feature_Area_m2"].sum().reset_index()
+        pivot = grouped.pivot(index="TEXTSTRING", columns="Category", values="Feature_Area_m2").fillna(0)
         pivot.reset_index(inplace=True)
 
-        base = command_areas[["TEXTSTRING", "Command_Area_km2"]].drop_duplicates()
+        base = command_areas[["TEXTSTRING", "Command_Area_m2"]].drop_duplicates()
         merged = pd.merge(base, pivot, on="TEXTSTRING", how="left")
         merged = pd.merge(merged, chaur_summary, on="TEXTSTRING", how="left").fillna(0)
 
-        fixed_cols = ["TEXTSTRING", "Command_Area_km2", "Chaur_Area_km2"]
+        fixed_cols = ["TEXTSTRING", "Command_Area_m2", "Chaur_Area_m2"]
         feature_cols = sorted([col for col in merged.columns if col not in fixed_cols])
         area_df = merged[fixed_cols + feature_cols]
 
@@ -103,7 +103,7 @@ if command_area_zip and line_zip:
             st.stop()
 
         intersected_lines = gpd.overlay(lines, command_areas, how="intersection")
-        intersected_lines["Length_km"] = intersected_lines.geometry.length / 1000
+        intersected_lines["Length_m"] = intersected_lines.geometry.length
 
         possible_cols = ['Layer', 'Name', 'RoadType', 'Class']
         line_col = next((col for col in intersected_lines.columns if col in possible_cols), None)
@@ -115,7 +115,7 @@ if command_area_zip and line_zip:
             intersected_lines["Category"] = intersected_lines[line_col]
 
         line_summary = intersected_lines.groupby(["TEXTSTRING", "Category"])["Length_km"].sum().reset_index()
-        line_pivot = line_summary.pivot(index="TEXTSTRING", columns="Category", values="Length_km").fillna(0)
+        line_pivot = line_summary.pivot(index="TEXTSTRING", columns="Category", values="Length_m").fillna(0)
         line_pivot.reset_index(inplace=True)
 
         base = command_areas[["TEXTSTRING"]].drop_duplicates()
