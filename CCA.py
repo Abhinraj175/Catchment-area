@@ -7,7 +7,7 @@ import os
 from io import BytesIO
 
 st.set_page_config(layout="wide")
-st.title("📐 Command Area-wise Feature & Line Matrix (with Chaur Exclusion)")
+st.title("📐 Command Area-wise Feature & Line Matrix (All Inputs Reprojected to WGS 84)")
 
 def unzip_shapefile(zip_bytes):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -19,11 +19,14 @@ def unzip_shapefile(zip_bytes):
             return None
         gdf = gpd.read_file(shp_files[0])
 
+        # Force everything to EPSG:4326 (WGS 84)
         if gdf.crs is None:
-            st.warning("⚠️ No CRS found in shapefile. Assuming EPSG:4326 (WGS 84).")
+            st.warning("⚠️ No CRS found. Assuming EPSG:4326.")
             gdf.set_crs(epsg=4326, inplace=True)
+        else:
+            gdf = gdf.to_crs(epsg=4326)
 
-        return gdf.to_crs(epsg=32643)
+        return gdf
 
 # Upload widgets
 st.subheader("🗂 Upload Command Area Polygon Shapefile (.zip)")
@@ -62,10 +65,10 @@ if command_area_zip and text_point_zip and feature_zip and chaur_zip:
         if command_areas['TEXTSTRING'].isnull().any():
             st.warning("⚠️ Some polygons couldn't be matched with a TEXTSTRING.")
 
-        command_areas["Command_Area_m2"] = command_areas.geometry.area 
+        command_areas["Command_Area_m2"] = command_areas.geometry.to_crs(epsg=32643).area
 
         chaur_cmd = gpd.overlay(chaur_areas, command_areas, how="intersection")
-        chaur_cmd["Area_m2"] = chaur_cmd.geometry.area 
+        chaur_cmd["Area_m2"] = chaur_cmd.geometry.to_crs(epsg=32643).area
         chaur_summary = chaur_cmd.groupby("TEXTSTRING")["Area_m2"].sum().reset_index()
         chaur_summary.rename(columns={"Area_m2": "Chaur_Area_m2"}, inplace=True)
 
@@ -80,7 +83,7 @@ if command_area_zip and text_point_zip and feature_zip and chaur_zip:
             features_no_chaur["Category"] = features_no_chaur[category_col]
 
         intersections = gpd.overlay(features_no_chaur, command_areas, how="intersection")
-        intersections["Feature_Area_m2"] = intersections.geometry.area
+        intersections["Feature_Area_m2"] = intersections.geometry.to_crs(epsg=32643).area
 
         grouped = intersections.groupby(["TEXTSTRING", "Category"])["Feature_Area_m2"].sum().reset_index()
         pivot = grouped.pivot(index="TEXTSTRING", columns="Category", values="Feature_Area_m2").fillna(0)
@@ -120,7 +123,7 @@ if command_area_zip and text_point_zip and line_zip:
         command_areas = gpd.sjoin_nearest(raw_command_areas, text_points[['geometry', 'TEXTSTRING']], how="left", distance_col="dist")
 
         intersected_lines = gpd.overlay(lines, command_areas, how="intersection")
-        intersected_lines["Length_m"] = intersected_lines.geometry.length
+        intersected_lines["Length_m"] = intersected_lines.geometry.to_crs(epsg=32643).length
 
         possible_cols = ['Layer', 'Name', 'RoadType', 'Class']
         line_col = next((col for col in intersected_lines.columns if col in possible_cols), None)
