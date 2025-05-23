@@ -6,9 +6,15 @@ import tempfile
 import os
 from io import BytesIO
 from shapely.geometry import Point
+from packaging import version
 
 st.set_page_config(layout="wide")
 st.title("📐 Command Area-wise Feature & Line Matrix (with Chaur Exclusion)")
+
+# Check for compatible geopandas version
+if version.parse(gpd.__version__) < version.parse("0.10.0"):
+    st.error("GeoPandas version must be >= 0.10.0 to use 'sjoin_nearest'.")
+    st.stop()
 
 def unzip_shapefile(zip_bytes):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -55,8 +61,7 @@ if command_area_zip and text_point_zip:
         command_areas = command_areas.reset_index(drop=True)
         label_points = label_points[["geometry", "TEXTSTRING"]].copy()
 
-        command_areas = gpd.sjoin_nearest(command_areas, text_points[['geometry', 'TEXTSTRING']], how="left", distance_col="dist")
-
+        command_areas = gpd.sjoin_nearest(command_areas, label_points, how="left", distance_col="dist")
         command_areas = command_areas.dropna(subset=["TEXTSTRING"])
         st.success("✅ Attribute join completed using nearest point.")
 
