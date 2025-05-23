@@ -114,7 +114,7 @@ if command_area_zip and line_zip:
         else:
             intersected_lines["Category"] = intersected_lines[line_col]
 
-        line_summary = intersected_lines.groupby(["TEXTSTRING", "Category"])["Length_km"].sum().reset_index()
+        line_summary = intersected_lines.groupby(["TEXTSTRING", "Category"])["Length_m"].sum().reset_index()
         line_pivot = line_summary.pivot(index="TEXTSTRING", columns="Category", values="Length_m").fillna(0)
         line_pivot.reset_index(inplace=True)
 
