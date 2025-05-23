@@ -4,13 +4,13 @@ import pandas as pd
 import os
 
 st.set_page_config(layout="wide")
-
 st.title("📍 Command Area Feature Analyzer")
 
 # --- Upload Section ---
 st.header("📂 Upload Shapefiles")
 
 cmd_area_file = st.file_uploader("Upload Command Area Polygon Shapefile (.zip)", type="zip", key="cmd")
+text_point_file = st.file_uploader("Upload Point TEXT Layer (.zip)", type="zip", key="text")
 features_file = st.file_uploader("Upload Feature Polygon Shapefile (.zip)", type="zip", key="feat")
 chaur_file = st.file_uploader("Upload Chaur Polygon Shapefile (.zip)", type="zip", key="chaur")
 line_file = st.file_uploader("Upload Line Feature Shapefile (.zip)", type="zip", key="line")
@@ -26,27 +26,49 @@ def unzip_shapefile(uploaded_zip, extract_to="shp_data"):
     return None
 
 # --- Load All Shapefiles ---
-cmd_gdf, feat_gdf, chaur_gdf, line_gdf = None, None, None, None
+cmd_gdf, text_gdf, feat_gdf, chaur_gdf, line_gdf = None, None, None, None, None
 
 cmd_dir = unzip_shapefile(cmd_area_file)
 if cmd_dir:
     cmd_gdf = gpd.read_file(cmd_dir)
-    cmd_gdf = cmd_gdf.to_crs(epsg=32644)  # Adjust EPSG if needed
+    if cmd_gdf.crs is None:
+        cmd_gdf.set_crs(epsg=4326, inplace=True)
+    cmd_gdf = cmd_gdf.to_crs(epsg=32645)
+
+text_dir = unzip_shapefile(text_point_file)
+if text_dir:
+    text_gdf = gpd.read_file(text_dir)
+    if text_gdf.crs is None:
+        text_gdf.set_crs(epsg=4326, inplace=True)
+    text_gdf = text_gdf.to_crs(epsg=32645)
+
+# --- Join Attributes by Nearest ---
+if cmd_gdf is not None and text_gdf is not None:
+    if 'TEXTSTRING' not in cmd_gdf.columns:
+        joined = gpd.sjoin_nearest(cmd_gdf, text_gdf[['TEXTSTRING', 'geometry']], how='left', distance_col='dist')
+        cmd_gdf['TEXTSTRING'] = joined['TEXTSTRING']
+        cmd_gdf.drop(columns=['dist'], inplace=True)
 
 feat_dir = unzip_shapefile(features_file)
 if feat_dir:
     feat_gdf = gpd.read_file(feat_dir)
-    feat_gdf = feat_gdf.to_crs(epsg=32644)
+    if feat_gdf.crs is None:
+        feat_gdf.set_crs(epsg=4326, inplace=True)
+    feat_gdf = feat_gdf.to_crs(epsg=32645)
 
 chaur_dir = unzip_shapefile(chaur_file)
 if chaur_dir:
     chaur_gdf = gpd.read_file(chaur_dir)
-    chaur_gdf = chaur_gdf.to_crs(epsg=32644)
+    if chaur_gdf.crs is None:
+        chaur_gdf.set_crs(epsg=4326, inplace=True)
+    chaur_gdf = chaur_gdf.to_crs(epsg=32645)
 
 line_dir = unzip_shapefile(line_file)
 if line_dir:
     line_gdf = gpd.read_file(line_dir)
-    line_gdf = line_gdf.to_crs(epsg=32644)
+    if line_gdf.crs is None:
+        line_gdf.set_crs(epsg=4326, inplace=True)
+    line_gdf = line_gdf.to_crs(epsg=32645)
 
 # --- Area Matrix Calculation ---
 if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
@@ -63,7 +85,6 @@ if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
         cmd_area = geom.area
         row_data['Command_Area_m2'] = cmd_area
 
-        # Chaur intersection
         chaur_inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs),
                                   chaur_gdf, how='intersection')
         chaur_area = chaur_inter.area.sum() if not chaur_inter.empty else 0.0
@@ -74,7 +95,6 @@ if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
             fsubset = feat_gdf[feat_gdf['Layer'] == ftype]
             inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), fsubset, how='intersection')
             if not inter.empty:
-                # Remove overlap with chaur
                 inter = gpd.overlay(inter, chaur_gdf, how='difference')
                 area = inter.area.sum()
             else:
