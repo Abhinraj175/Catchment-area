@@ -115,7 +115,7 @@ if command_area_zip and line_zip:
         intersected_lines["Length_km"] = intersected_lines.geometry.length / 1000
 
         # Detect line type column
-        possible_cols = ['Type', 'Name', 'RoadType', 'Class']
+        possible_cols = ['Layer', 'Name', 'RoadType', 'Class']
         line_col = next((col for col in intersected_lines.columns if col in possible_cols), None)
 
         if not line_col:
