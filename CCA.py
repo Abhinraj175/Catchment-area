@@ -73,22 +73,30 @@ if command_area_zip and feature_zip and chaur_zip:
         pivot = grouped.pivot(index="TEXTSTRING", columns="Category", values="Feature_Area_km2").fillna(0)
         pivot.reset_index(inplace=True)
 
-        # Step 5: Merge all with command areas
+        # Step 5: Create base with all command areas
         base = command_areas[["TEXTSTRING", "Command_Area_km2"]].drop_duplicates()
-        merged = pd.merge(base, pivot, on="TEXTSTRING", how="left")
-        merged = pd.merge(merged, chaur_summary, on="TEXTSTRING", how="left")
-        merged["Chaur_Area_km2"] = merged["Chaur_Area_km2"].fillna(0)
 
-        # Reorder columns
-        feature_cols = sorted([col for col in merged.columns if col not in ["TEXTSTRING", "Command_Area_km2", "Chaur_Area_km2"]])
-        final_df = merged[["TEXTSTRING", "Command_Area_km2", "Chaur_Area_km2"] + feature_cols]
+        # Merge pivoted feature areas with base
+        merged = pd.merge(base, pivot, on="TEXTSTRING", how="left")
+
+        # Merge chaur area
+        merged = pd.merge(merged, chaur_summary, on="TEXTSTRING", how="left")
+
+        # Fill missing values with 0 (command areas with no overlap)
+        merged = merged.fillna(0)
+
+        # Reorder: TEXTSTRING, Command_Area_km2, Chaur_Area_km2, features...
+        fixed_cols = ["TEXTSTRING", "Command_Area_km2", "Chaur_Area_km2"]
+        feature_cols = sorted([col for col in merged.columns if col not in fixed_cols])
+        final_df = merged[fixed_cols + feature_cols]
 
         # Display
-        st.subheader("📊 Final Area Matrix (Chaur Excluded from Features)")
+        st.subheader("📊 Final Area Matrix (All Commands Included)")
         st.dataframe(final_df)
 
+        # Download
         st.download_button(
-            label="📥 Download CSV",
+            "📥 Download CSV",
             data=final_df.to_csv(index=False).encode("utf-8"),
             file_name="command_area_with_chaur_exclusion.csv",
             mime="text/csv"
