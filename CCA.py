@@ -24,6 +24,9 @@ def unzip_shapefile(zip_bytes):
 st.subheader("🗂 Upload Command Area Shapefile (.zip)")
 command_area_zip = st.file_uploader("Command Area Shapefile", type=["zip"])
 
+st.subheader("🗂 Upload TEXT Point Shapefile (.zip with TEXTSTRING column)")
+text_point_zip = st.file_uploader("TEXT Point Layer", type=["zip"])
+
 st.subheader("🗂 Upload Feature Shapefile (.zip)")
 feature_zip = st.file_uploader("Feature Shapefile", type=["zip"])
 
@@ -36,22 +39,37 @@ line_zip = st.file_uploader("Line Feature Shapefile", type=["zip"])
 area_df, line_df = None, None
 
 # Area matrix computation
-if command_area_zip and feature_zip and chaur_zip:
-    command_areas = unzip_shapefile(command_area_zip)
+if command_area_zip and text_point_zip and feature_zip and chaur_zip:
+    raw_command_areas = unzip_shapefile(command_area_zip)
+    text_points = unzip_shapefile(text_point_zip)
     features = unzip_shapefile(feature_zip)
     chaur_areas = unzip_shapefile(chaur_zip)
 
-    if command_areas is not None and features is not None and chaur_areas is not None:
-        st.success("✅ Area shapefiles loaded!")
-
-        if 'TEXTSTRING' not in command_areas.columns:
-            st.error("❌ 'TEXTSTRING' column missing in Command Area shapefile.")
+    if raw_command_areas is not None and text_points is not None:
+        if 'TEXTSTRING' not in text_points.columns:
+            st.error("❌ 'TEXTSTRING' column missing in TEXT point shapefile.")
             st.stop()
 
-        command_areas["Command_Area_m2"] = command_areas.geometry.area 
+        # Join attributes from nearest point
+        raw_command_areas["geometry_centroid"] = raw_command_areas.geometry.centroid
+        joined = gpd.sjoin_nearest(
+            raw_command_areas.set_geometry("geometry_centroid"),
+            text_points[["geometry", "TEXTSTRING"]],
+            how="left",
+            distance_col="distance"
+        )
+        command_areas = raw_command_areas.drop(columns=["geometry_centroid"])
+        command_areas["TEXTSTRING"] = joined["TEXTSTRING"].values
+        command_areas = command_areas.dropna(subset=["TEXTSTRING"])
+
+        if command_areas.empty:
+            st.error("❌ No command areas matched with TEXT points.")
+            st.stop()
+
+        command_areas["Command_Area_m2"] = command_areas.geometry.area
 
         chaur_cmd = gpd.overlay(chaur_areas, command_areas, how="intersection")
-        chaur_cmd["Area_m2"] = chaur_cmd.geometry.area 
+        chaur_cmd["Area_m2"] = chaur_cmd.geometry.area
         chaur_summary = chaur_cmd.groupby("TEXTSTRING")["Area_m2"].sum().reset_index()
         chaur_summary.rename(columns={"Area_m2": "Chaur_Area_m2"}, inplace=True)
 
@@ -91,16 +109,26 @@ if command_area_zip and feature_zip and chaur_zip:
         )
 
 # Line matrix computation
-if command_area_zip and line_zip:
-    command_areas = unzip_shapefile(command_area_zip)
+if command_area_zip and text_point_zip and line_zip:
+    raw_command_areas = unzip_shapefile(command_area_zip)
+    text_points = unzip_shapefile(text_point_zip)
     lines = unzip_shapefile(line_zip)
 
-    if command_areas is not None and lines is not None:
-        st.success("✅ Line shapefile loaded!")
-
-        if 'TEXTSTRING' not in command_areas.columns:
-            st.error("❌ 'TEXTSTRING' column missing in Command Area shapefile.")
+    if raw_command_areas is not None and text_points is not None:
+        if 'TEXTSTRING' not in text_points.columns:
+            st.error("❌ 'TEXTSTRING' column missing in TEXT point shapefile.")
             st.stop()
+
+        raw_command_areas["geometry_centroid"] = raw_command_areas.geometry.centroid
+        joined = gpd.sjoin_nearest(
+            raw_command_areas.set_geometry("geometry_centroid"),
+            text_points[["geometry", "TEXTSTRING"]],
+            how="left",
+            distance_col="distance"
+        )
+        command_areas = raw_command_areas.drop(columns=["geometry_centroid"])
+        command_areas["TEXTSTRING"] = joined["TEXTSTRING"].values
+        command_areas = command_areas.dropna(subset=["TEXTSTRING"])
 
         intersected_lines = gpd.overlay(lines, command_areas, how="intersection")
         intersected_lines["Length_m"] = intersected_lines.geometry.length
