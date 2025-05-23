@@ -141,3 +141,10 @@ if command_area_zip and line_zip:
             file_name="command_area_line_lengths.csv",
             mime="text/csv"
         )
+
+st.download_button(
+    label="📥 Download Combined Excel File",
+    data=output,
+    file_name="command_area_analysis.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
