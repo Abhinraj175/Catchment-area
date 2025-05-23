@@ -50,7 +50,7 @@ if catchment_zip and feature_zip:
         intersections["Feature_Area_km2"] = intersections.geometry.area / 1e6
 
         # Detect feature classification column (Category, Type, etc.)
-        possible_category_columns = ['Category', 'Type', 'Class', 'LandUse', 'Name']
+        possible_category_columns = ['Layer', 'Type', 'Class', 'LandUse', 'Name']
         category_column = None
         for col in intersections.columns:
             if col in possible_category_columns:
