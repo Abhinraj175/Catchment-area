@@ -1,15 +1,10 @@
-geopandas
-pandas
-matplotlib
 streamlit
-shapely
-fiona
-pyproj
-rtree
-xlsxwriter
 geopandas>=0.10.0
 shapely
 fiona
 pyproj
 rtree
+pandas
+openpyxl
+xlsxwriter
 
