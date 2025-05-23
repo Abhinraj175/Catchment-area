@@ -18,14 +18,19 @@ def unzip_shapefile(zip_bytes):
             st.error("No .shp file found in the uploaded ZIP.")
             return None
         gdf = gpd.read_file(shp_files[0])
+
+        if gdf.crs is None:
+            st.warning("⚠️ No CRS found in shapefile. Assuming EPSG:4326 (WGS 84).")
+            gdf.set_crs(epsg=4326, inplace=True)
+
         return gdf.to_crs(epsg=32643)
 
 # Upload widgets
-st.subheader("🗂 Upload Command Area Shapefile (.zip)")
+st.subheader("🗂 Upload Command Area Polygon Shapefile (.zip)")
 command_area_zip = st.file_uploader("Command Area Shapefile", type=["zip"])
 
-st.subheader("🗂 Upload TEXT Point Shapefile (.zip with TEXTSTRING column)")
-text_point_zip = st.file_uploader("TEXT Point Layer", type=["zip"])
+st.subheader("🗂 Upload Command Area TEXT Point Shapefile (.zip)")
+text_point_zip = st.file_uploader("TEXT Layer (Point) Shapefile", type=["zip"])
 
 st.subheader("🗂 Upload Feature Shapefile (.zip)")
 feature_zip = st.file_uploader("Feature Shapefile", type=["zip"])
@@ -38,7 +43,7 @@ line_zip = st.file_uploader("Line Feature Shapefile", type=["zip"])
 
 area_df, line_df = None, None
 
-# Area matrix computation
+# Area Matrix Computation
 if command_area_zip and text_point_zip and feature_zip and chaur_zip:
     raw_command_areas = unzip_shapefile(command_area_zip)
     text_points = unzip_shapefile(text_point_zip)
@@ -46,30 +51,21 @@ if command_area_zip and text_point_zip and feature_zip and chaur_zip:
     chaur_areas = unzip_shapefile(chaur_zip)
 
     if raw_command_areas is not None and text_points is not None:
+        st.success("✅ Command area and text points loaded!")
+
         if 'TEXTSTRING' not in text_points.columns:
-            st.error("❌ 'TEXTSTRING' column missing in TEXT point shapefile.")
+            st.error("❌ 'TEXTSTRING' column missing in point (TEXT) shapefile.")
             st.stop()
 
-        # Join attributes from nearest point
-        raw_command_areas["geometry_centroid"] = raw_command_areas.geometry.centroid
-        joined = gpd.sjoin_nearest(
-            raw_command_areas.set_geometry("geometry_centroid"),
-            text_points[["geometry", "TEXTSTRING"]],
-            how="left",
-            distance_col="distance"
-        )
-        command_areas = raw_command_areas.drop(columns=["geometry_centroid"])
-        command_areas["TEXTSTRING"] = joined["TEXTSTRING"].values
-        command_areas = command_areas.dropna(subset=["TEXTSTRING"])
+        # Join attribute by nearest
+        command_areas = gpd.sjoin_nearest(raw_command_areas, text_points[['geometry', 'TEXTSTRING']], how="left", distance_col="dist")
+        if command_areas['TEXTSTRING'].isnull().any():
+            st.warning("⚠️ Some polygons couldn't be matched with a TEXTSTRING.")
 
-        if command_areas.empty:
-            st.error("❌ No command areas matched with TEXT points.")
-            st.stop()
-
-        command_areas["Command_Area_m2"] = command_areas.geometry.area
+        command_areas["Command_Area_m2"] = command_areas.geometry.area 
 
         chaur_cmd = gpd.overlay(chaur_areas, command_areas, how="intersection")
-        chaur_cmd["Area_m2"] = chaur_cmd.geometry.area
+        chaur_cmd["Area_m2"] = chaur_cmd.geometry.area 
         chaur_summary = chaur_cmd.groupby("TEXTSTRING")["Area_m2"].sum().reset_index()
         chaur_summary.rename(columns={"Area_m2": "Chaur_Area_m2"}, inplace=True)
 
@@ -108,27 +104,20 @@ if command_area_zip and text_point_zip and feature_zip and chaur_zip:
             mime="text/csv"
         )
 
-# Line matrix computation
+# Line Matrix Computation
 if command_area_zip and text_point_zip and line_zip:
     raw_command_areas = unzip_shapefile(command_area_zip)
     text_points = unzip_shapefile(text_point_zip)
     lines = unzip_shapefile(line_zip)
 
-    if raw_command_areas is not None and text_points is not None:
+    if raw_command_areas is not None and text_points is not None and lines is not None:
+        st.success("✅ Line shapefile loaded!")
+
         if 'TEXTSTRING' not in text_points.columns:
-            st.error("❌ 'TEXTSTRING' column missing in TEXT point shapefile.")
+            st.error("❌ 'TEXTSTRING' column missing in point (TEXT) shapefile.")
             st.stop()
 
-        raw_command_areas["geometry_centroid"] = raw_command_areas.geometry.centroid
-        joined = gpd.sjoin_nearest(
-            raw_command_areas.set_geometry("geometry_centroid"),
-            text_points[["geometry", "TEXTSTRING"]],
-            how="left",
-            distance_col="distance"
-        )
-        command_areas = raw_command_areas.drop(columns=["geometry_centroid"])
-        command_areas["TEXTSTRING"] = joined["TEXTSTRING"].values
-        command_areas = command_areas.dropna(subset=["TEXTSTRING"])
+        command_areas = gpd.sjoin_nearest(raw_command_areas, text_points[['geometry', 'TEXTSTRING']], how="left", distance_col="dist")
 
         intersected_lines = gpd.overlay(lines, command_areas, how="intersection")
         intersected_lines["Length_m"] = intersected_lines.geometry.length
@@ -159,7 +148,7 @@ if command_area_zip and text_point_zip and line_zip:
             mime="text/csv"
         )
 
-# Combined Excel Download
+# Combined Excel
 if area_df is not None and line_df is not None:
     output_excel = BytesIO()
     with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
