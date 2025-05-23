@@ -8,7 +8,7 @@ import os
 st.set_page_config(layout="wide")
 st.title("📐 Catchment-wise Feature Category Area Summary")
 
-# Helper: Extract and read shapefile from ZIP
+# Function to unzip shapefile from uploaded ZIP
 def unzip_shapefile(zip_bytes):
     with tempfile.TemporaryDirectory() as tmpdir:
         with zipfile.ZipFile(zip_bytes, "r") as zip_ref:
@@ -18,13 +18,13 @@ def unzip_shapefile(zip_bytes):
             st.error("No .shp file found in the uploaded ZIP.")
             return None
         gdf = gpd.read_file(shp_files[0])
-        return gdf.to_crs(epsg=32643)  # UTM zone 43N (modify if needed)
+        return gdf.to_crs(epsg=32643)  # Update CRS as needed
 
-# Upload inputs
-st.subheader("🗂 Upload Catchment Shapefile (ZIP with .shp, .shx, .dbf, etc.)")
+# Upload UI
+st.subheader("🗂 Upload Catchment Shapefile (.zip including .shp, .shx, .dbf, etc.)")
 catchment_zip = st.file_uploader("Catchment Shapefile", type=["zip"])
 
-st.subheader("🗂 Upload Feature Shapefile (ZIP with .shp, .shx, .dbf, etc.)")
+st.subheader("🗂 Upload Feature Shapefile (.zip including .shp, .shx, .dbf, etc.)")
 feature_zip = st.file_uploader("Feature Shapefile", type=["zip"])
 
 if catchment_zip and feature_zip:
@@ -34,16 +34,23 @@ if catchment_zip and feature_zip:
     if catchments is not None and features is not None:
         st.success("✅ Shapefiles uploaded and read successfully.")
 
-        # Assign IDs and area to catchments
-        catchments["Catchment_ID"] = catchments.index + 1
+        # Check for TEXTSTRING column in catchments
+        if 'TEXTSTRING' not in catchments.columns:
+            st.error("❌ 'TEXTSTRING' column not found in catchment shapefile.")
+            st.stop()
+
+        catchments = catchments.copy()
+        features = features.copy()
+
+        # Calculate total catchment area in km²
         catchments["Catchment_Area_km2"] = catchments.geometry.area / 1e6
 
-        # Intersect to get only overlapping regions
+        # Intersect features with catchments
         intersections = gpd.overlay(features, catchments, how="intersection")
         intersections["Feature_Area_km2"] = intersections.geometry.area / 1e6
 
-        # Try to identify the feature classification column
-        possible_category_columns = ['Layer', 'Type', 'Class', 'LandUse', 'Name']
+        # Detect feature classification column (Category, Type, etc.)
+        possible_category_columns = ['Category', 'Type', 'Class', 'LandUse', 'Name']
         category_column = None
         for col in intersections.columns:
             if col in possible_category_columns:
@@ -51,32 +58,33 @@ if catchment_zip and feature_zip:
                 break
 
         if not category_column:
-            st.warning("⚠️ Could not identify a category column (e.g., 'Category', 'Type', etc.). Using default.")
+            st.warning("⚠️ Could not identify feature category column. Defaulting to 'Unknown'.")
             intersections["Category"] = "Unknown"
             category_column = "Category"
 
-        # Group and summarize by catchment and category
-        summary = intersections.groupby(["Catchment_ID", category_column]).agg(
+        # Group by catchment and feature category
+        summary = intersections.groupby(["TEXTSTRING", category_column]).agg(
             Feature_Category_Area_km2=("Feature_Area_km2", "sum")
         ).reset_index()
 
-        # Merge with total catchment areas
+        # Merge with catchment area table
+        catchment_areas = catchments[["TEXTSTRING", "Catchment_Area_km2"]]
         final_summary = pd.merge(
-            catchments[["Catchment_ID", "Catchment_Area_km2"]],
             summary,
-            on="Catchment_ID",
-            how="right"
+            catchment_areas,
+            on="TEXTSTRING",
+            how="left"
         )
 
-        # Display table
+        # Display result
         st.subheader("📊 Catchment-wise Feature Category Area Summary")
         st.dataframe(final_summary)
 
-        # Download option
+        # Download CSV
         csv_bytes = final_summary.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "📥 Download CSV Report",
+            label="📥 Download Summary CSV",
             data=csv_bytes,
-            file_name="catchment_feature_category_summary.csv",
+            file_name="feature_category_area_by_catchment.csv",
             mime="text/csv"
         )
