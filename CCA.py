@@ -6,9 +6,9 @@ import tempfile
 import os
 
 st.set_page_config(layout="wide")
-st.title("📐 Command Area-wise Feature Area Matrix (with Chaur Area Handling)")
+st.title("📐 Command Area-wise Feature Area Matrix (with Chaur Exclusion)")
 
-# Function to unzip and read shapefiles
+# Function to unzip and read shapefile
 def unzip_shapefile(zip_bytes):
     with tempfile.TemporaryDirectory() as tmpdir:
         with zipfile.ZipFile(zip_bytes, "r") as zip_ref:
@@ -18,9 +18,9 @@ def unzip_shapefile(zip_bytes):
             st.error("No .shp file found in the uploaded ZIP.")
             return None
         gdf = gpd.read_file(shp_files[0])
-        return gdf.to_crs(epsg=32643)  # Set CRS as per your project
+        return gdf.to_crs(epsg=32643)
 
-# Upload interface
+# Upload widgets
 st.subheader("🗂 Upload Command Area Shapefile (.zip)")
 command_area_zip = st.file_uploader("Command Area Shapefile", type=["zip"])
 
@@ -36,59 +36,60 @@ if command_area_zip and feature_zip and chaur_zip:
     chaur_areas = unzip_shapefile(chaur_zip)
 
     if command_areas is not None and features is not None and chaur_areas is not None:
-        st.success("✅ All shapefiles loaded successfully!")
+        st.success("✅ Shapefiles loaded successfully!")
 
         if 'TEXTSTRING' not in command_areas.columns:
             st.error("❌ 'TEXTSTRING' column not found in Command Area shapefile.")
             st.stop()
 
-        # Calculate command area size
+        # Compute command area
         command_areas["Command_Area_km2"] = command_areas.geometry.area / 1e6
 
-        # Step 1: Chaur-overlapping features → Category = "Chaur"
-        chaur_overlap = gpd.overlay(features, chaur_areas, how="intersection")
-        chaur_overlap["Category"] = "Chaur"
+        # Step 1: Calculate Chaur area per command
+        chaur_cmd = gpd.overlay(chaur_areas, command_areas, how="intersection")
+        chaur_cmd["Area_km2"] = chaur_cmd.geometry.area / 1e6
+        chaur_summary = chaur_cmd.groupby("TEXTSTRING")["Area_km2"].sum().reset_index()
+        chaur_summary.rename(columns={"Area_km2": "Chaur_Area_km2"}, inplace=True)
 
-        # Step 2: Remaining features (not overlapping Chaur)
-        non_chaur = gpd.overlay(features, chaur_areas, how="difference")
+        # Step 2: Remove chaur area from features
+        features_no_chaur = gpd.overlay(features, chaur_areas, how="difference")
 
-        # Detect category column
+        # Detect feature category column
         possible_cols = ['Layer', 'Type', 'Class', 'LandUse', 'Name']
-        category_col = next((col for col in non_chaur.columns if col in possible_cols), None)
+        category_col = next((col for col in features_no_chaur.columns if col in possible_cols), None)
 
         if not category_col:
-            non_chaur["Category"] = "Unknown"
-            st.warning("⚠️ No category column found. Using 'Unknown'.")
+            features_no_chaur["Category"] = "Unknown"
+            st.warning("⚠️ Could not find category column. Using 'Unknown'.")
         else:
-            non_chaur["Category"] = non_chaur[category_col]
+            features_no_chaur["Category"] = features_no_chaur[category_col]
 
-        # Merge both feature sets
-        all_features = pd.concat([chaur_overlap, non_chaur], ignore_index=True)
-
-        # Intersect with command areas
-        intersections = gpd.overlay(all_features, command_areas, how="intersection")
+        # Step 3: Intersect non-chaur features with command area
+        intersections = gpd.overlay(features_no_chaur, command_areas, how="intersection")
         intersections["Feature_Area_km2"] = intersections.geometry.area / 1e6
 
-        # Pivot table to wide format
+        # Step 4: Group and pivot feature areas
         grouped = intersections.groupby(["TEXTSTRING", "Category"])["Feature_Area_km2"].sum().reset_index()
         pivot = grouped.pivot(index="TEXTSTRING", columns="Category", values="Feature_Area_km2").fillna(0)
         pivot.reset_index(inplace=True)
 
-        # Merge with command area
-        summary = pd.merge(command_areas[["TEXTSTRING", "Command_Area_km2"]], pivot, on="TEXTSTRING", how="left")
+        # Step 5: Merge all with command areas
+        base = command_areas[["TEXTSTRING", "Command_Area_km2"]].drop_duplicates()
+        merged = pd.merge(base, pivot, on="TEXTSTRING", how="left")
+        merged = pd.merge(merged, chaur_summary, on="TEXTSTRING", how="left")
+        merged["Chaur_Area_km2"] = merged["Chaur_Area_km2"].fillna(0)
 
-        # Reorder: TEXTSTRING, Command_Area_km2, then feature columns alphabetically
-        fixed_cols = ["TEXTSTRING", "Command_Area_km2"]
-        feature_cols = sorted([col for col in summary.columns if col not in fixed_cols])
-        summary = summary[fixed_cols + feature_cols]
+        # Reorder columns
+        feature_cols = sorted([col for col in merged.columns if col not in ["TEXTSTRING", "Command_Area_km2", "Chaur_Area_km2"]])
+        final_df = merged[["TEXTSTRING", "Command_Area_km2", "Chaur_Area_km2"] + feature_cols]
 
-        # Display and download
-        st.subheader("📊 Command Area-wise Feature Area Matrix (with Chaur Areas handled)")
-        st.dataframe(summary)
+        # Display
+        st.subheader("📊 Final Area Matrix (Chaur Excluded from Features)")
+        st.dataframe(final_df)
 
         st.download_button(
-            "📥 Download CSV",
-            data=summary.to_csv(index=False).encode("utf-8"),
-            file_name="command_area_feature_matrix_with_chaur.csv",
+            label="📥 Download CSV",
+            data=final_df.to_csv(index=False).encode("utf-8"),
+            file_name="command_area_with_chaur_exclusion.csv",
             mime="text/csv"
         )
