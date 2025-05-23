@@ -55,8 +55,8 @@ if command_area_zip and text_point_zip:
         command_areas = command_areas.reset_index(drop=True)
         label_points = label_points[["geometry", "TEXTSTRING"]].copy()
 
-        joined = gpd.sjoin_nearest(command_areas, label_points, how="left", distance_col="dist")
-        command_areas["TEXTSTRING"] = joined["TEXTSTRING"]
+        command_areas = gpd.sjoin_nearest(command_areas, text_points[['geometry', 'TEXTSTRING']], how="left", distance_col="dist")
+
         command_areas = command_areas.dropna(subset=["TEXTSTRING"])
         st.success("✅ Attribute join completed using nearest point.")
 
