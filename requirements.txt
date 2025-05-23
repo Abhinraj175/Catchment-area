@@ -7,4 +7,9 @@ fiona
 pyproj
 rtree
 xlsxwriter
-gpd.sjoin_nearest
+geopandas>=0.10.0
+shapely
+fiona
+pyproj
+rtree
+
