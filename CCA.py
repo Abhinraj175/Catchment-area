@@ -1,7 +1,6 @@
 import streamlit as st
 import geopandas as gpd
 import pandas as pd
-import os
 import tempfile
 import zipfile
 
@@ -15,7 +14,7 @@ features_file = st.file_uploader("Upload Feature Polygon Shapefile (.zip)", type
 chaur_file = st.file_uploader("Upload Chaur Polygon Shapefile (.zip)", type="zip", key="chaur")
 line_file = st.file_uploader("Upload Line Feature Shapefile (.zip)", type="zip", key="line")
 
-# --- Utility function to unzip and load shapefile ---
+# --- Utility Functions ---
 def unzip_shapefile(uploaded_zip):
     if uploaded_zip:
         temp_dir = tempfile.mkdtemp()
@@ -24,8 +23,8 @@ def unzip_shapefile(uploaded_zip):
         return temp_dir
     return None
 
-def load_gdf(zipfile, target_crs=32645):
-    directory = unzip_shapefile(zipfile)
+def load_gdf(zip_file, target_crs=32645):
+    directory = unzip_shapefile(zip_file)
     if directory:
         gdf = gpd.read_file(directory)
         if gdf.crs is None:
@@ -33,9 +32,8 @@ def load_gdf(zipfile, target_crs=32645):
         return gdf.to_crs(epsg=target_crs)
     return None
 
-# --- Load All Shapefiles ---
+# --- Load Shapefiles ---
 cmd_gdf = load_gdf(cmd_area_file)
-text_gdf = load_gdf(text_point_file)
 feat_gdf = load_gdf(features_file)
 chaur_gdf = load_gdf(chaur_file)
 line_gdf = load_gdf(line_file)
@@ -43,34 +41,24 @@ line_gdf = load_gdf(line_file)
 # --- Area Matrix Calculation ---
 if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
     st.subheader("📊 Final Area Matrix (All Commands Included)")
-
     feature_types = feat_gdf['Layer'].unique()
     results = []
 
     for _, row in cmd_gdf.iterrows():
-        cmd_name = row['TEXTSTRING']
+        cmd_name = row.get('TEXTSTRING', f"CMD_{_}")
         geom = row['geometry']
-        row_data = {'TEXTSTRING': cmd_name}
+        row_data = {'TEXTSTRING': cmd_name, 'Command_Area_m2': geom.area}
 
-        cmd_area = geom.area
-        row_data['Command_Area_m2'] = cmd_area
-
-        chaur_inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs),
-                                  chaur_gdf, how='intersection')
-        chaur_area = chaur_inter.area.sum() if not chaur_inter.empty else 0.0
-        row_data['Chaur_Area_m2'] = chaur_area
+        chaur_inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), chaur_gdf, how='intersection')
+        row_data['Chaur_Area_m2'] = chaur_inter.area.sum() if not chaur_inter.empty else 0.0
 
         feature_areas = {}
         for ftype in feature_types:
             fsubset = feat_gdf[feat_gdf['Layer'] == ftype]
             inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), fsubset, how='intersection')
-            if not inter.empty:
-                inter = gpd.overlay(inter, chaur_gdf, how='difference')
-                area = inter.area.sum()
-            else:
-                area = 0.0
-            feature_areas[ftype] = area
-            row_data[ftype] = area
+            inter = gpd.overlay(inter, chaur_gdf, how='difference') if not inter.empty else inter
+            feature_areas[ftype] = inter.area.sum() if not inter.empty else 0.0
+            row_data[ftype] = feature_areas[ftype]
 
         row_data['Sum_Features_Area_m2'] = sum(feature_areas.values())
         results.append(row_data)
@@ -82,21 +70,18 @@ if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
 # --- Line Feature Length Matrix ---
 if cmd_gdf is not None and line_gdf is not None:
     st.subheader("📏 Line Feature Length Matrix (Per Command Area)")
-
     line_types = line_gdf['Layer'].unique()
     line_results = []
 
     for _, row in cmd_gdf.iterrows():
-        cmd_name = row['TEXTSTRING']
+        cmd_name = row.get('TEXTSTRING', f"CMD_{_}")
         geom = row['geometry']
         row_data = {'TEXTSTRING': cmd_name}
 
         for ltype in line_types:
             lsubset = line_gdf[line_gdf['Layer'] == ltype]
-            inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs),
-                                lsubset, how='intersection')
-            length = inter.length.sum() if not inter.empty else 0.0
-            row_data[ltype] = length
+            inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), lsubset, how='intersection')
+            row_data[ltype] = inter.length.sum() if not inter.empty else 0.0
 
         line_results.append(row_data)
 
