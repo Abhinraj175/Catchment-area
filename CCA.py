@@ -41,16 +41,6 @@ feat_gdf = load_gdf(features_file)
 chaur_gdf = load_gdf(chaur_file)
 line_gdf = load_gdf(line_file)
 
-# --- Join Text Labels by Nearest if TEXTSTRING not already in cmd_gdf ---
-if cmd_gdf is not None and text_gdf is not None:
-    if 'TEXTSTRING' not in cmd_gdf.columns:
-        st.info("TEXTSTRING not found in command area; assigning from nearest text point layer...")
-        joined = gpd.sjoin_nearest(cmd_gdf, text_gdf[['TEXTSTRING', 'geometry']], how='left', distance_col='dist')
-        cmd_gdf['TEXTSTRING'] = joined['TEXTSTRING'].values
-        cmd_gdf.drop(columns=['dist'], inplace=True)
-    else:
-        st.success("TEXTSTRING already present in command area attribute table. Skipping label join.")
-
 # --- Area Matrix Calculation ---
 if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
     st.subheader("📊 Final Area Matrix (All Commands Included)")
