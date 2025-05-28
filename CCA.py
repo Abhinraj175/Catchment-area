@@ -1,90 +1,147 @@
 import streamlit as st
 import geopandas as gpd
 import pandas as pd
-import tempfile
 import zipfile
+import tempfile
+import os
+from io import BytesIO
 
 st.set_page_config(layout="wide")
-st.title("📍 Command Area Feature Analyzer")
+st.title("📐 Command Area-wise Feature & Line Matrix (with Chaur Exclusion)")
 
-# --- Upload Section ---
-st.header("📂 Upload Shapefiles")
-cmd_area_file = st.file_uploader("Upload Command Area Polygon Shapefile (.zip)", type="zip", key="cmd")
-features_file = st.file_uploader("Upload Feature Polygon Shapefile (.zip)", type="zip", key="feat")
-chaur_file = st.file_uploader("Upload Chaur Polygon Shapefile (.zip)", type="zip", key="chaur")
-line_file = st.file_uploader("Upload Line Feature Shapefile (.zip)", type="zip", key="line")
+def unzip_shapefile(zip_bytes):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with zipfile.ZipFile(zip_bytes, "r") as zip_ref:
+            zip_ref.extractall(tmpdir)
+        shp_files = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir) if f.endswith(".shp")]
+        if not shp_files:
+            st.error("No .shp file found in the uploaded ZIP.")
+            return None
+        gdf = gpd.read_file(shp_files[0])
+        return gdf.to_crs(epsg=32643)
 
-# --- Utility Functions ---
-def unzip_shapefile(uploaded_zip):
-    if uploaded_zip:
-        temp_dir = tempfile.mkdtemp()
-        with zipfile.ZipFile(uploaded_zip, "r") as zip_ref:
-            zip_ref.extractall(temp_dir)
-        return temp_dir
-    return None
+# Upload widgets
+st.subheader("🗂 Upload Command Area Shapefile (.zip)")
+command_area_zip = st.file_uploader("Command Area Shapefile", type=["zip"])
 
-def load_gdf(zip_file, target_crs=32645):
-    directory = unzip_shapefile(zip_file)
-    if directory:
-        gdf = gpd.read_file(directory)
-        if gdf.crs is None:
-            gdf.set_crs(epsg=4326, inplace=True)
-        return gdf.to_crs(epsg=target_crs)
-    return None
+st.subheader("🗂 Upload Feature Shapefile (.zip)")
+feature_zip = st.file_uploader("Feature Shapefile", type=["zip"])
 
-# --- Load Shapefiles ---
-cmd_gdf = load_gdf(cmd_area_file)
-feat_gdf = load_gdf(features_file)
-chaur_gdf = load_gdf(chaur_file)
-line_gdf = load_gdf(line_file)
+st.subheader("🗂 Upload Chaur Area Shapefile (.zip)")
+chaur_zip = st.file_uploader("Chaur Area Shapefile", type=["zip"])
 
-# --- Area Matrix Calculation ---
-if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
-    st.subheader("📊 Final Area Matrix (All Commands Included)")
-    feature_types = feat_gdf['Layer'].unique()
-    results = []
+st.subheader("🗂 Upload Line Feature Shapefile (.zip)")
+line_zip = st.file_uploader("Line Feature Shapefile", type=["zip"])
 
-    for _, row in cmd_gdf.iterrows():
-        cmd_name = row.get('TEXTSTRING', f"CMD_{_}")
-        geom = row['geometry']
-        row_data = {'TEXTSTRING': cmd_name, 'Command_Area_m2': geom.area}
+area_df, line_df = None, None
 
-        chaur_inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), chaur_gdf, how='intersection')
-        row_data['Chaur_Area_m2'] = chaur_inter.area.sum() if not chaur_inter.empty else 0.0
+# Area matrix computation
+if command_area_zip and feature_zip and chaur_zip:
+    command_areas = unzip_shapefile(command_area_zip)
+    features = unzip_shapefile(feature_zip)
+    chaur_areas = unzip_shapefile(chaur_zip)
 
-        feature_areas = {}
-        for ftype in feature_types:
-            fsubset = feat_gdf[feat_gdf['Layer'] == ftype]
-            inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), fsubset, how='intersection')
-            inter = gpd.overlay(inter, chaur_gdf, how='difference') if not inter.empty else inter
-            feature_areas[ftype] = inter.area.sum() if not inter.empty else 0.0
-            row_data[ftype] = feature_areas[ftype]
+    if command_areas is not None and features is not None and chaur_areas is not None:
+        st.success("✅ Area shapefiles loaded!")
 
-        row_data['Sum_Features_Area_m2'] = sum(feature_areas.values())
-        results.append(row_data)
+        if 'TEXTSTRING' not in command_areas.columns:
+            st.error("❌ 'TEXTSTRING' column missing in Command Area shapefile.")
+            st.stop()
 
-    df_area = pd.DataFrame(results)
-    st.dataframe(df_area)
-    st.download_button("📥 Download Area CSV", df_area.to_csv(index=False), file_name="area_matrix.csv")
+        command_areas["Command_Area_m2"] = command_areas.geometry.area 
 
-# --- Line Feature Length Matrix ---
-if cmd_gdf is not None and line_gdf is not None:
-    st.subheader("📏 Line Feature Length Matrix (Per Command Area)")
-    line_types = line_gdf['Layer'].unique()
-    line_results = []
+        chaur_cmd = gpd.overlay(chaur_areas, command_areas, how="intersection")
+        chaur_cmd["Area_m2"] = chaur_cmd.geometry.area 
+        chaur_summary = chaur_cmd.groupby("TEXTSTRING")["Area_m2"].sum().reset_index()
+        chaur_summary.rename(columns={"Area_m2": "Chaur_Area_m2"}, inplace=True)
 
-    for _, row in cmd_gdf.iterrows():
-        cmd_name = row.get('TEXTSTRING', f"CMD_{_}")
-        geom = row['geometry']
-        row_data = {'TEXTSTRING': cmd_name}
+        features_no_chaur = gpd.overlay(features, chaur_areas, how="difference")
 
-        for ltype in line_types:
-            lsubset = line_gdf[line_gdf['Layer'] == ltype]
-            inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), lsubset, how='intersection')
-            row_data[ltype] = inter.length.sum() if not inter.empty else 0.0
+        possible_cols = ['Layer', 'Type', 'Class', 'LandUse', 'Name']
+        category_col = next((col for col in features_no_chaur.columns if col in possible_cols), None)
+        if not category_col:
+            features_no_chaur["Category"] = "Unknown"
+            st.warning("⚠️ Feature category column not found. Using 'Unknown'.")
+        else:
+            features_no_chaur["Category"] = features_no_chaur[category_col]
 
-        line_results.append(row_data)
+        intersections = gpd.overlay(features_no_chaur, command_areas, how="intersection")
+        intersections["Feature_Area_m2"] = intersections.geometry.area
 
-    df_line = pd.DataFrame(line_results)
-    st.dataframe(df_line)
-    st.download_button("📥 Download Line Length CSV", df_line.to_csv(index=False), file_name="line_length_matrix.csv")
+        grouped = intersections.groupby(["TEXTSTRING", "Category"])["Feature_Area_m2"].sum().reset_index()
+        pivot = grouped.pivot(index="TEXTSTRING", columns="Category", values="Feature_Area_m2").fillna(0)
+        pivot.reset_index(inplace=True)
+
+        base = command_areas[["TEXTSTRING", "Command_Area_m2"]].drop_duplicates()
+        merged = pd.merge(base, pivot, on="TEXTSTRING", how="left")
+        merged = pd.merge(merged, chaur_summary, on="TEXTSTRING", how="left").fillna(0)
+
+        fixed_cols = ["TEXTSTRING", "Command_Area_m2", "Chaur_Area_m2"]
+        feature_cols = sorted([col for col in merged.columns if col not in fixed_cols])
+        area_df = merged[fixed_cols + feature_cols]
+
+        st.subheader("📊 Final Area Matrix (All Commands Included)")
+        st.dataframe(area_df)
+
+        st.download_button(
+            label="📥 Download Area CSV",
+            data=area_df.to_csv(index=False).encode("utf-8"),
+            file_name="command_area_with_chaur_exclusion.csv",
+            mime="text/csv"
+        )
+
+# Line matrix computation
+if command_area_zip and line_zip:
+    command_areas = unzip_shapefile(command_area_zip)
+    lines = unzip_shapefile(line_zip)
+
+    if command_areas is not None and lines is not None:
+        st.success("✅ Line shapefile loaded!")
+
+        if 'TEXTSTRING' not in command_areas.columns:
+            st.error("❌ 'TEXTSTRING' column missing in Command Area shapefile.")
+            st.stop()
+
+        intersected_lines = gpd.overlay(lines, command_areas, how="intersection")
+        intersected_lines["Length_m"] = intersected_lines.geometry.length
+
+        possible_cols = ['Layer', 'Name', 'RoadType', 'Class']
+        line_col = next((col for col in intersected_lines.columns if col in possible_cols), None)
+
+        if not line_col:
+            intersected_lines["Category"] = "Unknown"
+            st.warning("⚠️ Could not detect line feature type. Using 'Unknown'.")
+        else:
+            intersected_lines["Category"] = intersected_lines[line_col]
+
+        line_summary = intersected_lines.groupby(["TEXTSTRING", "Category"])["Length_m"].sum().reset_index()
+        line_pivot = line_summary.pivot(index="TEXTSTRING", columns="Category", values="Length_m").fillna(0)
+        line_pivot.reset_index(inplace=True)
+
+        base = command_areas[["TEXTSTRING"]].drop_duplicates()
+        line_df = pd.merge(base, line_pivot, on="TEXTSTRING", how="left").fillna(0)
+
+        st.subheader("🛣️ Line Feature Length Matrix (per Command Area)")
+        st.dataframe(line_df)
+
+        st.download_button(
+            "📥 Download Line Feature CSV",
+            data=line_df.to_csv(index=False).encode("utf-8"),
+            file_name="command_area_line_lengths.csv",
+            mime="text/csv"
+        )
+
+# Combined Excel Download
+if area_df is not None and line_df is not None:
+    output_excel = BytesIO()
+    with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+        area_df.to_excel(writer, index=False, sheet_name="Area_Features")
+        line_df.to_excel(writer, index=False, sheet_name="Line_Features")
+    output_excel.seek(0)
+
+    st.download_button(
+        label="📥 Download Combined Excel File",
+        data=output_excel,
+        file_name="command_area_analysis.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
