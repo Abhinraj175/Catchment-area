@@ -1,19 +1,22 @@
 import streamlit as st
 import geopandas as gpd
 import pandas as pd
-import os, zipfile, tempfile
+import os
+import tempfile
+import zipfile
 
 st.set_page_config(layout="wide")
 st.title("📍 Command Area Feature Analyzer")
 
-# --- Upload Shapefiles ---
+# --- Upload Section ---
 st.header("📂 Upload Shapefiles")
-cmd_area_file = st.file_uploader("Upload Command Area Polygon (.zip)", type="zip")
-text_point_file = st.file_uploader("Upload Point TEXT Layer (.zip)", type="zip")
-features_file = st.file_uploader("Upload Feature Polygon (.zip)", type="zip")
-chaur_file = st.file_uploader("Upload Chaur Polygon (.zip)", type="zip")
-line_file = st.file_uploader("Upload Line Feature (.zip)", type="zip")
+cmd_area_file = st.file_uploader("Upload Command Area Polygon Shapefile (.zip)", type="zip", key="cmd")
+text_point_file = st.file_uploader("Upload Point TEXT Layer (.zip)", type="zip", key="text")
+features_file = st.file_uploader("Upload Feature Polygon Shapefile (.zip)", type="zip", key="feat")
+chaur_file = st.file_uploader("Upload Chaur Polygon Shapefile (.zip)", type="zip", key="chaur")
+line_file = st.file_uploader("Upload Line Feature Shapefile (.zip)", type="zip", key="line")
 
+# --- Utility function to unzip and load shapefile ---
 def unzip_shapefile(uploaded_zip):
     if uploaded_zip:
         temp_dir = tempfile.mkdtemp()
@@ -22,77 +25,89 @@ def unzip_shapefile(uploaded_zip):
         return temp_dir
     return None
 
-# --- Load Shapefiles ---
-def load_gdf(zipfile, epsg=32645):
-    folder = unzip_shapefile(zipfile)
-    if folder:
-        gdf = gpd.read_file(folder)
+def load_gdf(zipfile, target_crs=32645):
+    directory = unzip_shapefile(zipfile)
+    if directory:
+        gdf = gpd.read_file(directory)
         if gdf.crs is None:
             gdf.set_crs(epsg=4326, inplace=True)
-        return gdf.to_crs(epsg=epsg)
+        return gdf.to_crs(epsg=target_crs)
     return None
 
+# --- Load All Shapefiles ---
 cmd_gdf = load_gdf(cmd_area_file)
 text_gdf = load_gdf(text_point_file)
 feat_gdf = load_gdf(features_file)
 chaur_gdf = load_gdf(chaur_file)
 line_gdf = load_gdf(line_file)
 
-# --- Join Nearest TEXTSTRING if missing ---
-if cmd_gdf is not None and text_gdf is not None and 'TEXTSTRING' not in cmd_gdf.columns:
-    nearest = gpd.sjoin_nearest(cmd_gdf, text_gdf[['TEXTSTRING', 'geometry']], how='left', distance_col='dist')
-    cmd_gdf['TEXTSTRING'] = nearest['TEXTSTRING']
+# --- Join Text Labels by Nearest ---
+if cmd_gdf is not None and text_gdf is not None:
+    if 'TEXTSTRING' not in cmd_gdf.columns:
+        joined = gpd.sjoin_nearest(cmd_gdf, text_gdf[['TEXTSTRING', 'geometry']], how='left', distance_col='dist')
+        cmd_gdf['TEXTSTRING'] = joined['TEXTSTRING'].values  # avoid reindexing issue
+        cmd_gdf.drop(columns=['dist'], inplace=True)
 
 # --- Area Matrix Calculation ---
 if cmd_gdf is not None and feat_gdf is not None and chaur_gdf is not None:
-    st.subheader("📊 Area Matrix")
+    st.subheader("📊 Final Area Matrix (All Commands Included)")
 
-    cmd_gdf['Command_Area_m2'] = cmd_gdf.geometry.area
-
-    # Intersect features with cmd_gdf
+    feature_types = feat_gdf['Layer'].unique()
     results = []
-    for cmd_row in cmd_gdf.itertuples():
-        geom = cmd_row.geometry
-        row_data = {'TEXTSTRING': cmd_row.TEXTSTRING, 'Command_Area_m2': geom.area}
 
-        # Chaur Area
+    for _, row in cmd_gdf.iterrows():
+        cmd_name = row['TEXTSTRING']
+        geom = row['geometry']
+        row_data = {'TEXTSTRING': cmd_name}
+
+        cmd_area = geom.area
+        row_data['Command_Area_m2'] = cmd_area
+
         chaur_inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs),
                                   chaur_gdf, how='intersection')
         chaur_area = chaur_inter.area.sum() if not chaur_inter.empty else 0.0
         row_data['Chaur_Area_m2'] = chaur_area
 
-        # Feature Areas
-        for ftype in feat_gdf['Layer'].unique():
+        feature_areas = {}
+        for ftype in feature_types:
             fsubset = feat_gdf[feat_gdf['Layer'] == ftype]
             inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), fsubset, how='intersection')
             if not inter.empty:
                 inter = gpd.overlay(inter, chaur_gdf, how='difference')
-                row_data[ftype] = inter.area.sum()
+                area = inter.area.sum()
             else:
-                row_data[ftype] = 0.0
+                area = 0.0
+            feature_areas[ftype] = area
+            row_data[ftype] = area
 
+        row_data['Sum_Features_Area_m2'] = sum(feature_areas.values())
         results.append(row_data)
 
     df_area = pd.DataFrame(results)
     st.dataframe(df_area)
-    st.download_button("📥 Download Area Matrix", df_area.to_csv(index=False), file_name="area_matrix.csv")
+    st.download_button("📥 Download Area CSV", df_area.to_csv(index=False), file_name="area_matrix.csv")
 
-# --- Line Length Matrix ---
+# --- Line Feature Length Matrix ---
 if cmd_gdf is not None and line_gdf is not None:
-    st.subheader("📏 Line Length Matrix")
+    st.subheader("📏 Line Feature Length Matrix (Per Command Area)")
 
+    line_types = line_gdf['Layer'].unique()
     line_results = []
-    for cmd_row in cmd_gdf.itertuples():
-        geom = cmd_row.geometry
-        row_data = {'TEXTSTRING': cmd_row.TEXTSTRING}
 
-        for ltype in line_gdf['Layer'].unique():
+    for _, row in cmd_gdf.iterrows():
+        cmd_name = row['TEXTSTRING']
+        geom = row['geometry']
+        row_data = {'TEXTSTRING': cmd_name}
+
+        for ltype in line_types:
             lsubset = line_gdf[line_gdf['Layer'] == ltype]
-            inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs), lsubset, how='intersection')
-            row_data[ltype] = inter.length.sum() if not inter.empty else 0.0
+            inter = gpd.overlay(gpd.GeoDataFrame(geometry=[geom], crs=cmd_gdf.crs),
+                                lsubset, how='intersection')
+            length = inter.length.sum() if not inter.empty else 0.0
+            row_data[ltype] = length
 
         line_results.append(row_data)
 
     df_line = pd.DataFrame(line_results)
     st.dataframe(df_line)
-    st.download_button("📥 Download Line Length Matrix", df_line.to_csv(index=False), file_name="line_matrix.csv")
+    st.download_button("📥 Download Line Length CSV", df_line.to_csv(index=False), file_name="line_length_matrix.csv")
