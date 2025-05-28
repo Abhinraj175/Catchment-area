@@ -1,10 +1,7 @@
 streamlit
-geopandas>=0.10.0
-shapely
-fiona
-pyproj
-rtree
 pandas
+matplotlib
 openpyxl
-xlsxwriter
+openai
+
 
