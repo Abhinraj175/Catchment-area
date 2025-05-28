@@ -11,7 +11,6 @@ st.title("📍 Command Area Feature Analyzer")
 # --- Upload Section ---
 st.header("📂 Upload Shapefiles")
 cmd_area_file = st.file_uploader("Upload Command Area Polygon Shapefile (.zip)", type="zip", key="cmd")
-text_point_file = st.file_uploader("Upload Point TEXT Layer (.zip)", type="zip", key="text")
 features_file = st.file_uploader("Upload Feature Polygon Shapefile (.zip)", type="zip", key="feat")
 chaur_file = st.file_uploader("Upload Chaur Polygon Shapefile (.zip)", type="zip", key="chaur")
 line_file = st.file_uploader("Upload Line Feature Shapefile (.zip)", type="zip", key="line")
