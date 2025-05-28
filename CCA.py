@@ -46,7 +46,8 @@ if text_dir:
 if cmd_gdf is not None and text_gdf is not None:
     if 'TEXTSTRING' not in cmd_gdf.columns:
         joined = gpd.sjoin_nearest(cmd_gdf, text_gdf[['TEXTSTRING', 'geometry']], how='left', distance_col='dist')
-        cmd_gdf['TEXTSTRING'] = joined['TEXTSTRING']
+        cmd_gdf = joined
+
         cmd_gdf.drop(columns=['dist'], inplace=True)
 
 feat_dir = unzip_shapefile(features_file)
